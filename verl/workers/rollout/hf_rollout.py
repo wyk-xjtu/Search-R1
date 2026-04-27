@@ -25,6 +25,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from verl import DataProto
 from verl.utils.torch_functional import get_eos_mask
+from verl.utils.device import autocast, empty_cache
 from .base import BaseRollout
 
 from transformers import GenerationConfig
@@ -81,7 +82,7 @@ class HFRollout(BaseRollout):
             # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
             param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
         with param_ctx:
-            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            with autocast(dtype=torch.bfloat16):
                 output = self.module.generate(
                     input_ids=idx,
                     attention_mask=attention_mask,
@@ -134,7 +135,7 @@ class HFRollout(BaseRollout):
             batch_size=batch_size)
 
         # empty cache before compute old_log_prob
-        torch.cuda.empty_cache()
+        empty_cache()
 
         self.module.train()
         return DataProto(batch=batch)

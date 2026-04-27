@@ -14,6 +14,7 @@ import datasets
 import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
+from verl.utils.device import current_device, empty_cache, get_device_type
 
 def load_corpus(corpus_path: str):
     corpus = datasets.load_dataset(
@@ -39,8 +40,9 @@ def load_model(model_path: str, use_fp16: bool = False):
     model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
     model.eval()
-    model.cuda()
-    if use_fp16: 
+    device = current_device()
+    model.to(device)
+    if use_fp16 and device.type != "cpu":
         model = model.half()
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True, trust_remote_code=True)
     return model, tokenizer
@@ -94,7 +96,7 @@ class Encoder:
                                 truncation=True,
                                 return_tensors="pt"
                                 )
-        inputs = {k: v.cuda() for k, v in inputs.items()}
+        inputs = {k: v.to(current_device()) for k, v in inputs.items()}
 
         if "T5" in type(self.model).__name__:
             # T5-based retrieval model
@@ -118,7 +120,7 @@ class Encoder:
         query_emb = query_emb.astype(np.float32, order="C")
         
         del inputs, output
-        torch.cuda.empty_cache()
+        empty_cache()
 
         return query_emb
 
@@ -208,11 +210,13 @@ class DenseRetriever(BaseRetriever):
     def __init__(self, config):
         super().__init__(config)
         self.index = faiss.read_index(self.index_path)
-        if config.faiss_gpu:
+        if config.faiss_gpu and get_device_type() == "cuda":
             co = faiss.GpuMultipleClonerOptions()
             co.useFloat16 = True
             co.shard = True
             self.index = faiss.index_cpu_to_all_gpus(self.index, co=co)
+        elif config.faiss_gpu and get_device_type() != "cuda":
+            warnings.warn("FAISS GPU is CUDA-only here; falling back to CPU FAISS on non-CUDA devices.")
 
         self.corpus = load_corpus(self.corpus_path)
         self.encoder = Encoder(
@@ -263,7 +267,7 @@ class DenseRetriever(BaseRetriever):
             scores.extend(batch_scores)
             
             del batch_emb, batch_scores, batch_idxs, query_batch, flat_idxs, batch_results
-            torch.cuda.empty_cache()
+            empty_cache()
             
         if return_score:
             return results, scores

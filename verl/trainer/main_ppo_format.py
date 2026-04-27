@@ -99,13 +99,19 @@ class RewardManager():
 
 import ray
 import hydra
+from verl.utils.device import device_count, get_device_type
 
 
 @hydra.main(config_path='config', config_name='ppo_trainer', version_base=None)
 def main(config):
     if not ray.is_initialized():
         # this is for local ray cluster
-        ray.init(runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}})
+        debug_env = 'HCCL_DEBUG' if get_device_type() == 'npu' else 'NCCL_DEBUG'
+        ray_kwargs = {'runtime_env': {'env_vars': {'TOKENIZERS_PARALLELISM': 'true', debug_env: 'WARN'}}}
+        if get_device_type() == 'npu':
+            import os
+            ray_kwargs['resources'] = {os.getenv('SEARCH_R1_RAY_RESOURCE', 'NPU'): device_count()}
+        ray.init(**ray_kwargs)
 
     ray.get(main_task.remote(config))
 

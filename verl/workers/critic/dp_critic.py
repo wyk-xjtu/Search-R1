@@ -30,8 +30,14 @@ from verl.utils.py_functional import append_to_dict
 from verl.utils.torch_functional import masked_mean
 from verl.utils.ulysses import ulysses_pad_and_slice_inputs, gather_outpus_and_unpad
 from verl.utils.seqlen_balancing import rearrange_micro_batches, get_reverse_idx
+from verl.utils.device import autocast, current_device
 
-from flash_attn.bert_padding import pad_input, unpad_input, rearrange, index_first_axis
+try:
+    from flash_attn.bert_padding import pad_input, unpad_input, rearrange, index_first_axis
+    FLASH_ATTN_PADDING_AVAILABLE = True
+except ImportError:
+    pad_input = unpad_input = rearrange = index_first_axis = None
+    FLASH_ATTN_PADDING_AVAILABLE = False
 
 __all__ = ['DataParallelPPOCritic']
 
@@ -43,6 +49,8 @@ class DataParallelPPOCritic(BasePPOCritic):
         self.critic_module = critic_module
         self.critic_optimizer = critic_optimizer
         self.use_remove_padding = self.config.model.get('use_remove_padding', False)
+        if self.use_remove_padding and not FLASH_ATTN_PADDING_AVAILABLE:
+            raise ImportError("use_remove_padding=True requires flash-attn padding utilities; disable it on NPU.")
         print(f'Critic use_remove_padding={self.use_remove_padding}')
 
         assert self.config.ppo_mini_batch_size % self.config.ppo_micro_batch_size == 0
@@ -52,7 +60,7 @@ class DataParallelPPOCritic(BasePPOCritic):
 
     def _forward_micro_batch(self, micro_batch):
         response_length = micro_batch['responses'].size(-1)
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        with autocast(dtype=torch.bfloat16):
             input_ids = micro_batch['input_ids']
             batch, seqlen = input_ids.shape
             attention_mask = micro_batch['attention_mask']
@@ -138,7 +146,7 @@ class DataParallelPPOCritic(BasePPOCritic):
         if use_dynamic_bsz:
             indices = list(itertools.chain.from_iterable(indices))
             assert len(indices) == values.size(0), f"{len(indices)} vs. {values.size()}"
-            revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
+            revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long, device=values.device)
             values = values[revert_indices]
 
         return values
@@ -166,7 +174,7 @@ class DataParallelPPOCritic(BasePPOCritic):
             self.critic_optimizer.zero_grad()
 
             for data in micro_batches:
-                data = data.cuda()  # critic device is cpu when using offload
+                data = data.to(current_device())  # critic device is cpu when using offload
                 input_ids = data['input_ids']
                 responses = data['responses']
                 attention_mask = data['attention_mask']

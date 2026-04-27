@@ -11,6 +11,7 @@ import numpy as np
 from fastapi import FastAPI
 from pydantic import BaseModel
 from sentence_transformers import CrossEncoder
+from verl.utils.device import current_device
 
 from retrieval_server import get_retriever, Config as RetrieverConfig
 from rerank_server import SentenceTransformerCrossEncoder
@@ -47,7 +48,7 @@ def get_reranker(config):
         return SentenceTransformerCrossEncoder.load(
             config.rerank_model_name_or_path,
             batch_size=config.batch_size,
-            device="cuda" if torch.cuda.is_available() else "cpu"
+            device=current_device()
         )
     else:
         raise ValueError(f"Unknown reranker type: {config.reranker_type}")

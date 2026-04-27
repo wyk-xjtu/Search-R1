@@ -20,7 +20,8 @@ TODO(zhangchi.usc1992)
 
 import os
 
-os.environ['NCCL_DEBUG'] = 'WARN'
+os.environ.setdefault('NCCL_DEBUG', 'WARN')
+os.environ.setdefault('HCCL_DEBUG', 'WARN')
 os.environ['TOKENIZERS_PARALLELISM'] = 'true'
 
 import logging
@@ -43,6 +44,7 @@ from torch.distributed.device_mesh import DeviceMesh
 
 import verl.utils.hdfs_io as hdfs_io
 from verl.utils.debug import log_gpu_memory_usage
+from verl.utils.device import attention_implementation, autocast, current_device, get_device_type, set_device
 from peft import LoraConfig, TaskType, get_peft_model
 
 logger = logging.getLogger(__file__)
@@ -173,7 +175,7 @@ class FSDPSFTTrainer(object):
             self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(local_model_path,
                                                                                config=config,
                                                                                torch_dtype=torch.float32,
-                                                                               attn_implementation='flash_attention_2',
+                                                                               attn_implementation=attention_implementation(),
                                                                                trust_remote_code=trust_remote_code)
             if self.config.model.get('lora_rank', 0) > 0:
                 self.model.enable_input_require_grads()
@@ -214,7 +216,7 @@ class FSDPSFTTrainer(object):
                                mixed_precision=mixed_precision,
                                device_mesh=self.device_mesh,
                                sync_module_states=True,
-                               device_id=torch.cuda.current_device(),
+                               device_id=current_device(),
                                cpu_offload=cpu_offload,
                                use_orig_params=False)
 
@@ -242,10 +244,10 @@ class FSDPSFTTrainer(object):
                                                             num_training_steps=total_steps)
 
     def _compute_loss(self, batch):
-        loss_mask = batch.pop('loss_mask')[:, :-1].reshape(-1).cuda()
-        labels = batch['input_ids'][:, 1:].cuda()
+        loss_mask = batch.pop('loss_mask')[:, :-1].reshape(-1).to(current_device())
+        labels = batch['input_ids'][:, 1:].to(current_device())
 
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        with autocast(dtype=torch.bfloat16):
             output = self.fsdp_model(input_ids=batch['input_ids'],
                                      attention_mask=batch['attention_mask'],
                                      position_ids=batch['position_ids'],
@@ -307,7 +309,7 @@ class FSDPSFTTrainer(object):
 
         log_gpu_memory_usage('After offload weights', logger=logger)
 
-        step_loss = torch.tensor(step_loss).cuda()
+        step_loss = torch.tensor(step_loss, device=current_device())
         torch.distributed.all_reduce(step_loss, op=torch.distributed.ReduceOp.AVG)
         return {'train/loss': step_loss.detach().item(), 'train/lr(1e-3)': lr * 1e3}
 
@@ -362,7 +364,7 @@ class FSDPSFTTrainer(object):
             # validate before training
             val_losses = []
             for data in self.val_dataloader:
-                data = TensorDict(data, batch_size=self.config.data.micro_batch_size).cuda()
+                data = TensorDict(data, batch_size=self.config.data.micro_batch_size).to(current_device())
                 val_loss = self.validation_step(data)
                 val_losses.append(val_loss)
             if rank == 0:
@@ -374,7 +376,7 @@ class FSDPSFTTrainer(object):
         for epoch in range(self.config.trainer.total_epochs):
             self.train_sampler.set_epoch(epoch=epoch)
             for data in self.train_dataloader:
-                data = TensorDict(data, batch_size=self.config.data.train_batch_size).cuda()
+                data = TensorDict(data, batch_size=self.config.data.train_batch_size).to(current_device())
                 metric = self.training_step(data)
                 if rank == 0:
                     tracking.log(data=metric, step=global_step)
@@ -385,7 +387,7 @@ class FSDPSFTTrainer(object):
                     # Perform final validation
                     val_losses = []
                     for val_data in self.val_dataloader:
-                        val_data = TensorDict(val_data, batch_size=self.config.data.micro_batch_size).cuda()
+                        val_data = TensorDict(val_data, batch_size=self.config.data.micro_batch_size).to(current_device())
                         val_loss = self.validation_step(val_data)
                         val_losses.append(val_loss)
                     if rank == 0:
@@ -401,7 +403,7 @@ class FSDPSFTTrainer(object):
             # validation
             val_losses = []
             for data in self.val_dataloader:
-                data = TensorDict(data, batch_size=self.config.data.micro_batch_size).cuda()
+                data = TensorDict(data, batch_size=self.config.data.micro_batch_size).to(current_device())
                 val_loss = self.validation_step(data)
                 val_losses.append(val_loss)
             if rank == 0:
@@ -425,8 +427,9 @@ from verl.utils.distributed import initialize_global_process_group
 @hydra.main(config_path='config', config_name='sft_trainer', version_base=None)
 def main(config):
     local_rank, rank, world_size = initialize_global_process_group()
+    set_device(local_rank)
 
-    device_mesh = init_device_mesh(device_type='cuda', mesh_shape=(world_size,), mesh_dim_names=('dp',))
+    device_mesh = init_device_mesh(device_type=get_device_type(), mesh_shape=(world_size,), mesh_dim_names=('dp',))
     trainer = FSDPSFTTrainer(config=config, device_mesh=device_mesh)
     trainer.fit()
 

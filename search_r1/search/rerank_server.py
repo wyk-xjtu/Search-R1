@@ -7,6 +7,7 @@ from sentence_transformers import CrossEncoder
 import torch
 from transformers import HfArgumentParser
 import numpy as np
+from verl.utils.device import current_device
 
 import uvicorn
 from fastapi import FastAPI
@@ -14,10 +15,10 @@ from pydantic import BaseModel
 
 
 class BaseCrossEncoder:
-    def __init__(self, model, batch_size=32, device="cuda"):
+    def __init__(self, model, batch_size=32, device=None):
         self.model = model
         self.batch_size = batch_size
-        self.model.to(device)
+        self.model.to(device or current_device())
 
     def _passage_to_string(self, doc_item):
         if "document" not in doc_item:
@@ -72,7 +73,7 @@ class BaseCrossEncoder:
 
 
 class SentenceTransformerCrossEncoder(BaseCrossEncoder):
-    def __init__(self, model, batch_size=32, device="cuda"):
+    def __init__(self, model, batch_size=32, device=None):
         super().__init__(model, batch_size, device)
 
     def _predict(self, pairs: list[tuple[str, str]]):
@@ -106,7 +107,7 @@ def get_reranker(config):
         return SentenceTransformerCrossEncoder.load(
             config.rerank_model_name_or_path,
             batch_size=config.batch_size,
-            device="cuda" if torch.cuda.is_available() else "cpu"
+            device=current_device()
         )
     else:
         raise ValueError(f"Unknown reranker type: {config.reranker_type}")

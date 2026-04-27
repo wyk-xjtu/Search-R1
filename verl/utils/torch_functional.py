@@ -23,10 +23,11 @@ import torch.distributed
 import torch.nn.functional as F
 from tensordict import TensorDict
 from torch import nn
+from verl.utils.device import get_device_type
 
 try:
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
-    FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE = True
+    FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE = get_device_type() == "cuda"
 except ImportError:
     FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE = False
 

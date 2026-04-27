@@ -69,7 +69,8 @@ class WorkerHelper:
 
 class WorkerMeta:
     keys = [
-        "WORLD_SIZE", "RANK", "LOCAL_WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT", "CUDA_VISIBLE_DEVICES"
+        "WORLD_SIZE", "RANK", "LOCAL_WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT",
+        "CUDA_VISIBLE_DEVICES", "ASCEND_RT_VISIBLE_DEVICES"
     ]
 
     def __init__(self, store) -> None:
@@ -166,6 +167,10 @@ class Worker(WorkerHelper):
         import os
         cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "not set")
         return cuda_visible_devices
+
+    def get_ascend_visible_devices(self):
+        import os
+        return os.environ.get("ASCEND_RT_VISIBLE_DEVICES", "not set")
 
     @property
     def world_size(self):

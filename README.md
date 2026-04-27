@@ -58,6 +58,7 @@ Paper: [link1](https://arxiv.org/pdf/2503.09516), [link2](https://arxiv.org/abs/
 - [Inference](#inference)
 - [Use your own dataset](#use-your-own-dataset)
 - [Use your own search engine](#use-your-own-search-engine)
+- [Ascend NPU support](docs/ascend_npu.md)
 - [Features](#features)
 - [Ackowledge](#acknowledge)
 - [Citations](#citations)

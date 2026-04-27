@@ -3,12 +3,13 @@ import torch
 import random
 from datasets import load_dataset
 import requests
+from verl.utils.device import current_device, get_device_type
 
 question = "Mike Barnett negotiated many contracts including which player that went on to become general manager of CSKA Moscow of the Kontinental Hockey League?"
 
 # Model ID and device setup
 model_id = "PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = current_device()
 
 question = question.strip()
 if question[-1] != '?':
@@ -25,7 +26,11 @@ If you find no further external knowledge needed, you can directly provide the a
 
 # Initialize the tokenizer and model
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
-model = transformers.AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="auto")
+model_dtype = torch.float32 if get_device_type() == "cpu" else torch.bfloat16
+if get_device_type() == "cuda":
+    model = transformers.AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=model_dtype, device_map="auto")
+else:
+    model = transformers.AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=model_dtype).to(device)
 
 # Define the custom stopping criterion
 class StopOnSequence(transformers.StoppingCriteria):

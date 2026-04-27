@@ -12,6 +12,7 @@ from tqdm import tqdm
 # from LongRAG.retriever.utils import load_model, load_corpus, pooling
 import datasets
 from transformers import AutoTokenizer, AutoModel, AutoConfig
+from verl.utils.device import current_device, device_count, get_device_type
 
 
 def load_model(
@@ -21,8 +22,9 @@ def load_model(
     model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
     model.eval()
-    model.cuda()
-    if use_fp16: 
+    device = current_device()
+    model.to(device)
+    if use_fp16 and device.type != "cpu":
         model = model.half()
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True, trust_remote_code=True)
 
@@ -88,7 +90,7 @@ class Index_Builder:
         self.save_embedding = save_embedding
         self.faiss_gpu = faiss_gpu
 
-        self.gpu_num = torch.cuda.device_count()
+        self.gpu_num = device_count()
         # prepare save dir
         print(self.save_dir)
         if not os.path.exists(self.save_dir):
@@ -186,7 +188,7 @@ class Index_Builder:
             memmap[:] = all_embeddings
 
     def encode_all(self):
-        if self.gpu_num > 1:
+        if get_device_type() == "cuda" and self.gpu_num > 1:
             print("Use multi gpu!")
             self.encoder = torch.nn.DataParallel(self.encoder)
             self.batch_size = self.batch_size * self.gpu_num
@@ -209,9 +211,9 @@ class Index_Builder:
                         truncation=True,
                         return_tensors='pt',
                         max_length=self.max_length,
-            ).to('cuda')
+            ).to(current_device())
 
-            inputs = {k: v.cuda() for k, v in inputs.items()}
+            inputs = {k: v.to(current_device()) for k, v in inputs.items()}
 
             #TODO: support encoder-only T5 model
             if "T5" in type(self.encoder).__name__:
@@ -268,7 +270,7 @@ class Index_Builder:
         dim = all_embeddings.shape[-1]
         faiss_index = faiss.index_factory(dim, self.faiss_type, faiss.METRIC_INNER_PRODUCT)
         
-        if self.faiss_gpu:
+        if self.faiss_gpu and get_device_type() == "cuda":
             co = faiss.GpuMultipleClonerOptions()
             co.useFloat16 = True
             co.shard = True
@@ -277,6 +279,11 @@ class Index_Builder:
                 faiss_index.train(all_embeddings)
             faiss_index.add(all_embeddings)
             faiss_index = faiss.index_gpu_to_cpu(faiss_index)
+        elif self.faiss_gpu and get_device_type() != "cuda":
+            warnings.warn("FAISS GPU is CUDA-only here; building the FAISS index on CPU.")
+            if not faiss_index.is_trained:
+                faiss_index.train(all_embeddings)
+            faiss_index.add(all_embeddings)
         else:
             if not faiss_index.is_trained:
                 faiss_index.train(all_embeddings)

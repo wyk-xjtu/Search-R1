@@ -13,16 +13,17 @@
 # limitations under the License.
 """Utilities for distributed training."""
 import os
+from verl.utils.device import distributed_backend, set_device
 
 
 def initialize_global_process_group(timeout_second=36000):
     import torch.distributed
     from datetime import timedelta
-    torch.distributed.init_process_group('nccl', timeout=timedelta(seconds=timeout_second))
+    torch.distributed.init_process_group(distributed_backend(), timeout=timedelta(seconds=timeout_second))
     local_rank = int(os.environ["LOCAL_RANK"])
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
 
     if torch.distributed.is_initialized():
-        torch.cuda.set_device(local_rank)
+        set_device(local_rank)
     return local_rank, rank, world_size

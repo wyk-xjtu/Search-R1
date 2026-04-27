@@ -1,0 +1,19 @@
+# Install torch and torch-npu from the Ascend/CANN-matched distribution first.
+# Then install the common Python dependencies below.
+accelerate
+codetiming
+datasets
+dill
+hydra-core
+numpy
+pandas
+pybind11
+ray
+tensordict<0.6
+transformers<4.48
+wandb
+IPython
+matplotlib
+uvicorn
+fastapi
+faiss-cpu

@@ -11,6 +11,7 @@ import numpy as np
 from transformers import AutoConfig, AutoTokenizer, AutoModel
 import argparse
 import datasets
+from verl.utils.device import current_device, device_count, get_device_type, memory_allocated
 
 
 def load_corpus(corpus_path: str):
@@ -45,8 +46,9 @@ def load_model(
     model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
     model.eval()
-    model.cuda()
-    if use_fp16: 
+    device = current_device()
+    model.to(device)
+    if use_fp16 and device.type != "cpu":
         model = model.half()
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True, trust_remote_code=True)
 
@@ -103,7 +105,7 @@ class Encoder:
                                 truncation=True,
                                 return_tensors="pt"
                                 )
-        inputs = {k: v.cuda() for k, v in inputs.items()}
+        inputs = {k: v.to(current_device()) for k, v in inputs.items()}
 
         if "T5" in type(self.model).__name__:
             # T5-based retrieval model
@@ -225,9 +227,9 @@ class BM25Retriever(BaseRetriever):
 
 def get_available_gpu_memory():
     memory_info = []
-    for i in range(torch.cuda.device_count()):
-        total_memory = torch.cuda.get_device_properties(i).total_memory
-        allocated_memory = torch.cuda.memory_allocated(i)
+    for i in range(device_count()):
+        total_memory = torch.cuda.get_device_properties(i).total_memory if get_device_type() == "cuda" else 0
+        allocated_memory = memory_allocated()
         free_memory = total_memory - allocated_memory
         memory_info.append((i, free_memory / 1e9))  # Convert to GB
     return memory_info
@@ -239,12 +241,14 @@ class DenseRetriever(BaseRetriever):
     def __init__(self, config: dict):
         super().__init__(config)
         self.index = faiss.read_index(self.index_path)
-        if config.faiss_gpu:
+        if config.faiss_gpu and get_device_type() == "cuda":
             co = faiss.GpuMultipleClonerOptions()
             co.useFloat16 = True
             co.shard = True
             self.index = faiss.index_cpu_to_all_gpus(self.index, co=co)
             # self.index = faiss.index_cpu_to_all_gpus(self.index)
+        elif config.faiss_gpu and get_device_type() != "cuda":
+            warnings.warn("FAISS GPU is CUDA-only here; falling back to CPU FAISS on non-CUDA devices.")
 
         self.corpus = load_corpus(self.corpus_path)
         self.encoder = Encoder(

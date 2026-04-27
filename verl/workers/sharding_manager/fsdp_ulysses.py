@@ -22,6 +22,7 @@ from torch.distributed.device_mesh import DeviceMesh
 
 from verl.utils.torch_functional import allgather_dict_tensors
 from verl.utils.ulysses import set_ulysses_sequence_parallel_group, get_ulysses_sequence_parallel_group
+from verl.utils.device import current_device
 import numpy as np
 
 import torch
@@ -66,7 +67,7 @@ class FSDPUlyssesShardingManager(BaseShardingManager):
             group = self.device_mesh['sp'].get_group()
 
             prev_device = data.batch.device
-            data.batch = data.batch.cuda(device=torch.cuda.current_device())
+            data.batch = data.batch.to(current_device())
             data.batch = allgather_dict_tensors(data.batch.contiguous(), size=sp_size, group=group, dim=0)
             data.batch = data.batch.to(prev_device)
             # all gather non_tensor_batch

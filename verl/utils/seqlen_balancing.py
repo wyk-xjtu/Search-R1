@@ -20,6 +20,7 @@ from torch import distributed as dist
 
 from tensordict import TensorDict
 import copy
+from verl.utils.device import current_device
 
 
 def karmarkar_karp(seqlen_list: List[int], k_partitions: int, equal_size: bool):
@@ -234,7 +235,7 @@ def rearrange_micro_batches(batch: TensorDict, max_token_len, dp_group=None):
     total_seqlen = seq_len_effective.sum().item()
     num_micro_batches = ceildiv(total_seqlen, max_token_len)
     if dist.is_initialized():
-        num_micro_batches = torch.tensor([num_micro_batches], device='cuda')
+        num_micro_batches = torch.tensor([num_micro_batches], device=current_device())
         dist.all_reduce(num_micro_batches, op=dist.ReduceOp.MAX, group=dp_group)
         num_micro_batches = num_micro_batches.cpu().item()
 

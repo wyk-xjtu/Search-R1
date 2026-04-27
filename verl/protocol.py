@@ -28,6 +28,7 @@ from tensordict import TensorDict
 from torch.utils.data import DataLoader, Dataset
 
 from verl.utils.py_functional import union_two_dict
+from verl.utils.device import is_accelerator_available
 
 __all__ = ['DataProto', 'union_tensor_dict']
 
@@ -207,7 +208,7 @@ class DataProto:
         batch_deserialized = io.BytesIO(initial_bytes=batch_deserialized_bytes)
         batch = torch.load(batch_deserialized,
                            weights_only=False,
-                           map_location='cpu' if not torch.cuda.is_available() else None)
+                           map_location='cpu' if not is_accelerator_available() else None)
         self.batch = batch
         self.non_tensor_batch = non_tensor_batch
         self.meta_info = meta_info

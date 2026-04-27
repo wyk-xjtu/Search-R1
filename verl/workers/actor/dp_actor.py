@@ -29,9 +29,15 @@ from verl.utils.py_functional import append_to_dict
 from verl.utils.torch_functional import logprobs_from_logits, masked_mean
 from verl.utils.ulysses import ulysses_pad_and_slice_inputs, gather_outpus_and_unpad
 from verl.utils.seqlen_balancing import rearrange_micro_batches, get_reverse_idx
+from verl.utils.device import autocast, current_device, maybe_compile
 import verl.utils.torch_functional as verl_F
 
-from flash_attn.bert_padding import pad_input, unpad_input, rearrange, index_first_axis
+try:
+    from flash_attn.bert_padding import pad_input, unpad_input, rearrange, index_first_axis
+    FLASH_ATTN_PADDING_AVAILABLE = True
+except ImportError:
+    pad_input = unpad_input = rearrange = index_first_axis = None
+    FLASH_ATTN_PADDING_AVAILABLE = False
 
 __all__ = ['DataParallelPPOActor']
 
@@ -49,11 +55,13 @@ class DataParallelPPOActor(BasePPOActor):
         self.actor_module = actor_module
         self.actor_optimizer = actor_optimizer
         self.use_remove_padding = self.config.get('use_remove_padding', False)
+        if self.use_remove_padding and not FLASH_ATTN_PADDING_AVAILABLE:
+            raise ImportError("use_remove_padding=True requires flash-attn padding utilities; disable it on NPU.")
         print(f'Actor use_remove_padding={self.use_remove_padding}')
         self.ulysses_sequence_parallel_size = self.config.ulysses_sequence_parallel_size
         self.use_ulysses_sp = self.ulysses_sequence_parallel_size > 1
 
-        self.compute_entropy_from_logits = torch.compile(verl_F.entropy_from_logits, dynamic=True)
+        self.compute_entropy_from_logits = maybe_compile(verl_F.entropy_from_logits, dynamic=True)
 
     def _forward_micro_batch(self, micro_batch, temperature) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -62,7 +70,7 @@ class DataParallelPPOActor(BasePPOActor):
             log_probs: # (bs, response_len)
         """
         response_length = micro_batch['responses'].size(-1)
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        with autocast(dtype=torch.bfloat16):
             input_ids = micro_batch['input_ids']
             batch_size, seqlen = input_ids.shape
             attention_mask = micro_batch['attention_mask']
@@ -195,7 +203,7 @@ class DataParallelPPOActor(BasePPOActor):
         if use_dynamic_bsz:
             indices = list(itertools.chain.from_iterable(indices))
             assert len(indices) == log_probs.size(0), f"{len(indices)} vs. {log_probs.size()}"
-            revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
+            revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long, device=log_probs.device)
             log_probs = log_probs[revert_indices]
 
         return log_probs
@@ -233,7 +241,7 @@ class DataParallelPPOActor(BasePPOActor):
             self.actor_optimizer.zero_grad()
 
             for data in micro_batches:
-                data = data.cuda()  # actor device is cpu when using offload
+                data = data.to(current_device())  # actor device is cpu when using offload
                 responses = data['responses']
                 response_length = responses.size(1)
                 attention_mask = data['attention_mask']

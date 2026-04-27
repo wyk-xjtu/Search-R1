@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import time
 from typing import Dict, List, Any, Tuple
 
@@ -22,6 +23,7 @@ from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy, Nod
 from ray.experimental.state.api import get_actor
 
 from verl.single_controller.base import WorkerGroup, ResourcePool, ClassWithInitArgs, Worker
+from verl.utils.device import get_device_type
 
 __all__ = ['Worker']
 
@@ -68,9 +70,10 @@ class RayResourcePool(ResourcePool):
         pg_name_prefix = name if name else \
             f"{self.name_prefix}verl_group_{'_'.join([str(count) for count in self._store])}:"
         # print(f"pg_name_prefix = {pg_name_prefix}")
+        accelerator_key = os.getenv("SEARCH_R1_RAY_RESOURCE", "NPU") if get_device_type() == "npu" else "GPU"
         pg_scheme = [[{
             "CPU": self.max_collocate_count,
-            "GPU": 1
+            accelerator_key: 1
         } if self.use_gpu else {
             "CPU": self.max_collocate_count
         } for _ in range(process_count)] for process_count in self._store]
@@ -160,8 +163,10 @@ class RayClassWithInitArgs(ClassWithInitArgs):
         }
         options.update(self._options)
 
-        if use_gpu:
+        if use_gpu and get_device_type() == "cuda":
             options["num_gpus"] = num_gpus
+        elif use_gpu and get_device_type() == "npu":
+            options["resources"] = {os.getenv("SEARCH_R1_RAY_RESOURCE", "NPU"): num_gpus}
 
         if len(self._additional_resource) > 1:
             for k, v in self._additional_resource.items():
@@ -239,7 +244,18 @@ class RayWorkerGroup(WorkerGroup):
                     'WG_BACKEND': 'ray',
                     'RAY_LOCAL_WORLD_SIZE': str(local_world_size),
                     'RAY_LOCAL_RANK': str(local_rank),
+                    'LOCAL_WORLD_SIZE': str(local_world_size),
+                    'LOCAL_RANK': str(local_rank),
                 }
+                for key in [
+                    'SEARCH_R1_DEVICE',
+                    'SEARCH_R1_RAY_RESOURCE',
+                    'SEARCH_R1_ATTENTION_IMPL',
+                    'ASCEND_RT_VISIBLE_DEVICES',
+                    'CUDA_VISIBLE_DEVICES',
+                ]:
+                    if key in os.environ:
+                        env_vars[key] = os.environ[key]
                 if rank != 0:
                     env_vars['MASTER_ADDR'] = self._master_addr
                     env_vars['MASTER_PORT'] = self._master_port
